@@ -80,6 +80,11 @@ Recommended package layout:
 
 If a markdown file is provided without a ready HTML companion, prefer converting it first with `baoyu-markdown-to-html` or the existing WeChat HTML render workflow instead of inventing ad hoc HTML in chat.
 
+Operational notes from current usage:
+
+- If an article package already has `article-publish.html`, upload that file directly. Do not reconstruct title or summary from a stale root `manifest.json`.
+- For long-form article batches, treat the HTML artifact as the source of truth for `<title>`, `<meta name="description">`, and body structure.
+
 ### Step 2: Prepare HTML If Needed
 
 For HTML input, the browser script extracts the content from `#output` when present, otherwise it falls back to the `<body>` content.
@@ -108,6 +113,8 @@ npx -y bun ${SKILL_DIR}/scripts/check-permissions.ts
 ```
 
 This verifies the runtime and confirms that Baijiahao is reachable before a browser session is started.
+
+If a fixed debug port fails, do not assume Chrome is unavailable. Check whether a logged-in Chrome is already exposing another live CDP port and reuse that session first.
 
 ### Step 5: Publish Via Browser
 
@@ -140,6 +147,11 @@ The script will:
 5. Inject HTML into the richest editable surface it can detect.
 6. Click draft-save by default, or publish only when `--submit` is set.
 
+Remote-image note:
+
+- Public image URLs are not automatically safe for Baijiahao. The editor uploads remote assets through `/materialui/picture/uploadProxy`, and some public hosts or redirect-style image URLs can still fail there.
+- Prefer stable direct image URLs, especially Wikimedia thumb URLs, over indirect redirect pages such as `Special:FilePath` when image durability matters.
+
 ### Step 6: Report Result
 
 Always report:
@@ -150,12 +162,22 @@ Always report:
 - Whether the action ended in draft save or submit attempt
 - Any manual follow-up still needed, especially cover selection or secondary confirmation dialogs
 
+Draft-save acceptance should use layered evidence:
+
+- Save response from `/pcui/article/save` with `errno=0` and draft status
+- Preview check from the rendered draft page for title/body/image count
+- Reopened editor check for final uploaded image count inside `iframe#ueditor_0`
+
+The content list is only a secondary hint. Preview image counts can still be false positives if the editor later reopens with fewer images.
+
 ## Common Mistakes
 
 - Treating `--submit` as the default. Use draft mode first.
 - Assuming markdown can always be rendered inline. Reuse a prepared HTML artifact when available.
 - Assuming Baijiahao cover upload is stable across UI versions.
 - Treating a Baijiahao page URL as proof of login. The browser flow should trust the `currentuser` probe plus page text, not URL shape alone.
+- Treating any public image URL as upload-safe. A URL can open in the browser and still fail `/materialui/picture/uploadProxy`.
+- Counting preview success alone as final success when正文图落地 matters. Reopen the editor and verify image persistence.
 
 ## References
 
