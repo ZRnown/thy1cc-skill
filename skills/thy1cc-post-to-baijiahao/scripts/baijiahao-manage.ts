@@ -17,6 +17,7 @@ import { getBaijiahaoPageState, isBaijiahaoSessionLoggedIn } from './baijiahao-a
 import {
   assertDeleteSafety,
   collectMetricRecord,
+  isListHydrated,
   parseManageArgs,
 } from './baijiahao-manage-parse.ts';
 import type { ArticleMetrics, BaijiahaoArticleItem, ManageOptions } from './baijiahao-manage-types.ts';
@@ -185,6 +186,33 @@ async function navigate(session: ChromeSession, url: string, slowMs: number): Pr
   await slowDown(slowMs);
 }
 
+async function waitForListHydration(session: ChromeSession, timeoutMs = 12000): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const snapshot = await evaluate<{
+      bodyLength: number;
+      anchorCount: number;
+      articleLinkCount: number;
+      hasListWord: boolean;
+    } | null>(session, `
+      (function() {
+        const text = (document.body && document.body.innerText || '').replace(/\\s+/g, ' ').trim();
+        return {
+          bodyLength: text.length,
+          anchorCount: document.querySelectorAll('a[href]').length,
+          articleLinkCount: Array.from(document.querySelectorAll('a[href]'))
+            .filter((node) => /builder\\/preview\\/s|builder\\/rc\\/edit|article_id=/.test(String(node.getAttribute('href') || '')))
+            .length,
+          hasListWord: text.includes('作品管理') && (text.includes('草稿') || text.includes('已发布')),
+        };
+      })()
+    `);
+
+    if (snapshot && isListHydrated(snapshot)) return;
+    await sleep(500);
+  }
+}
+
 function isMetricsEmpty(metrics: ArticleMetrics): boolean {
   return metrics.read === 0 && metrics.like === 0 && metrics.collect === 0 && metrics.share === 0 && metrics.comment === 0;
 }
@@ -297,7 +325,15 @@ async function collectListPages(session: ChromeSession, options: ManageOptions):
   for (let page = 1; page <= options.maxPages; page += 1) {
     await navigate(session, buildListUrl(options, page), options.slowMs);
     await assertNoRiskChallenge(session);
-    const pageItems = await collectListPageItems(session);
+    await waitForListHydration(session);
+    let pageItems = await collectListPageItems(session);
+    if (!Array.isArray(pageItems)) {
+      await sleep(1500);
+      pageItems = await collectListPageItems(session);
+    }
+    if (!Array.isArray(pageItems)) {
+      throw new Error('List page did not return a usable article array after hydration.');
+    }
     if (!pageItems.length) break;
 
     let newCount = 0;

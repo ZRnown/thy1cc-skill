@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import {
   assertDeleteSafety,
   collectMetricRecord,
+  isListHydrated,
   parseManageArgs,
   parseMetricValue,
 } from './baijiahao-manage-parse.ts';
@@ -45,4 +46,20 @@ test('assertDeleteSafety rejects delete when confirm flag missing', () => {
 test('assertDeleteSafety rejects delete without explicit article target', () => {
   const parsed = parseManageArgs(['delete', '--confirm']);
   expect(() => assertDeleteSafety(parsed)).toThrow('requires --article-id or --nid');
+});
+
+test('isListHydrated waits for article links or sufficiently hydrated body text', () => {
+  expect(isListHydrated({
+    bodyLength: 270,
+    anchorCount: 2,
+    articleLinkCount: 0,
+    hasListWord: true,
+  })).toBe(false);
+
+  expect(isListHydrated({
+    bodyLength: 1310,
+    anchorCount: 21,
+    articleLinkCount: 8,
+    hasListWord: true,
+  })).toBe(true);
 });

@@ -123,3 +123,15 @@ export function collectMetricRecord(record: Record<string, string | number | und
     comment: readAlias(record, ['comment', 'comments', '评论']),
   };
 }
+
+export function isListHydrated(snapshot: {
+  bodyLength: number;
+  anchorCount: number;
+  articleLinkCount: number;
+  hasListWord: boolean;
+}): boolean {
+  if (snapshot.articleLinkCount >= 3) return true;
+  if (snapshot.hasListWord && snapshot.bodyLength >= 600) return true;
+  if (snapshot.anchorCount >= 12 && snapshot.bodyLength >= 1000) return true;
+  return false;
+}
