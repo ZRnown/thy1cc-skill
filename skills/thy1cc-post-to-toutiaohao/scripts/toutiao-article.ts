@@ -482,33 +482,44 @@ async function downloadImageAsset(source: string, tempDir: string, index: number
   }
 
   let lastStatus = 0;
+  let lastError: unknown = null;
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const response = await fetch(source, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-      },
-    });
+    try {
+      const response = await fetch(source, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0',
+        },
+      });
 
-    if (response.ok) {
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (!buffer.length) {
-        throw new Error(`Downloaded empty image for Toutiao upload: ${source}`);
+      if (response.ok) {
+        const buffer = Buffer.from(await response.arrayBuffer());
+        if (!buffer.length) {
+          throw new Error(`Downloaded empty image for Toutiao upload: ${source}`);
+        }
+        const mime = (response.headers.get('content-type') || '').split(';')[0]!.trim();
+        const extension = inferExtensionFromSource(source, mime);
+        const filePath = path.join(tempDir, `toutiao-image-${index + 1}${extension}`);
+        fs.writeFileSync(filePath, buffer);
+        return { source, localPath: filePath };
       }
-      const mime = (response.headers.get('content-type') || '').split(';')[0]!.trim();
-      const extension = inferExtensionFromSource(source, mime);
-      const filePath = path.join(tempDir, `toutiao-image-${index + 1}${extension}`);
-      fs.writeFileSync(filePath, buffer);
-      return { source, localPath: filePath };
-    }
 
-    lastStatus = response.status;
-    const shouldRetry = response.status === 408 || response.status === 429 || response.status >= 500;
-    if (!shouldRetry || attempt === 3) {
-      throw new Error(`Failed to download image for Toutiao upload: ${source} (${response.status})`);
+      lastStatus = response.status;
+      const shouldRetry = response.status === 408 || response.status === 429 || response.status >= 500;
+      if (!shouldRetry || attempt === 3) {
+        throw new Error(`Failed to download image for Toutiao upload: ${source} (${response.status})`);
+      }
+    } catch (error) {
+      lastError = error;
+      if (attempt === 3) {
+        throw error;
+      }
     }
     await sleep(1_500 * (attempt + 1));
   }
 
+  if (lastError) {
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
   throw new Error(`Failed to download image for Toutiao upload: ${source} (${lastStatus || 'unknown'})`);
 }
 
