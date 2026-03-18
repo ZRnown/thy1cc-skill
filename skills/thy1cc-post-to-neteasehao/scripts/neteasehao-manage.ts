@@ -7,8 +7,8 @@ import { getNeteasehaoPageState, isNeteasehaoSessionLoggedIn } from './neteaseha
 import { extractMetricsFromText, parseManageCommand } from './neteasehao-manage-parse.ts';
 import type { ManageCommandOptions, NeteasehaoArticleSummary } from './neteasehao-manage-types.ts';
 
-const NETEASEHAO_HOME = 'https://mp.163.com/';
-const DEFAULT_CONTENT_MANAGE_URL = 'https://mp.163.com/article/manage';
+const NETEASEHAO_HOME = 'https://mp.163.com/#/';
+const DEFAULT_CONTENT_MANAGE_URL = 'https://mp.163.com/#/content-manage';
 
 interface ExtendConfig {
   chrome_profile_path?: string;

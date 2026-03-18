@@ -1,6 +1,6 @@
 ---
 name: thy1cc-post-to-toutiaohao
-description: Use when a user needs browser-led Toutiao Hao content management: listing content, reading article metrics (reads/likes/collects/shares), and deleting one article with explicit confirmation.
+description: "Use when a user needs browser-led Toutiao Hao content management, including listing content, reading article metrics, and deleting one article with explicit confirmation."
 ---
 
 # Manage Toutiao Hao

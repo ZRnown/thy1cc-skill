@@ -5,6 +5,7 @@ import {
   parseManageArgs,
   normalizeMetricValue,
   extractMetricsFromText,
+  isDeleteConfirmDialogTextSafe,
   validateDeleteArgs,
 } from './toutiao-manage-parse.ts';
 
@@ -46,4 +47,9 @@ test('validateDeleteArgs requires explicit confirm and an identifier', () => {
   assert.throws(() => validateDeleteArgs({ command: 'delete', confirm: false }), /--confirm/);
   assert.throws(() => validateDeleteArgs({ command: 'delete', confirm: true }), /--id or --title/);
   assert.doesNotThrow(() => validateDeleteArgs({ command: 'delete', confirm: true, id: 'abc' }));
+});
+
+test('isDeleteConfirmDialogTextSafe accepts live Toutiao delete prompt', () => {
+  assert.equal(isDeleteConfirmDialogTextSafe('确定删除此内容？ 内容删除后将无法恢复，请慎重考虑 取消 确定'), true);
+  assert.equal(isDeleteConfirmDialogTextSafe('作品分享设置 取消'), false);
 });

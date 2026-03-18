@@ -1,5 +1,7 @@
 import type { ArticleMetrics, ManageCommand, ManageOptions } from './baijiahao-manage-types.ts';
 
+export const METRIC_LABELS = ['阅读量', '阅读', '点赞量', '点赞', '收藏量', '收藏', '转发量', '转发', '分享量', '分享', '评论量', '评论'] as const;
+
 function parsePositiveInt(value: string, flag: string): number {
   const parsed = parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -117,11 +119,38 @@ function readAlias(record: Record<string, string | number | undefined>, aliases:
 export function collectMetricRecord(record: Record<string, string | number | undefined>): ArticleMetrics {
   return {
     read: readAlias(record, ['read', 'reads', 'view', 'views', '阅读', '阅读量']),
-    like: readAlias(record, ['like', 'likes', '点赞']),
-    collect: readAlias(record, ['collect', 'favorite', 'favorites', '收藏']),
-    share: readAlias(record, ['share', 'shares', '转发', '分享']),
-    comment: readAlias(record, ['comment', 'comments', '评论']),
+    like: readAlias(record, ['like', 'likes', '点赞', '点赞量']),
+    collect: readAlias(record, ['collect', 'favorite', 'favorites', '收藏', '收藏量']),
+    share: readAlias(record, ['share', 'shares', '转发', '转发量', '分享', '分享量']),
+    comment: readAlias(record, ['comment', 'comments', '评论', '评论量']),
   };
+}
+
+export function extractMetricMapFromText(input: string): Record<string, string> {
+  const output: Record<string, string> = {};
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return output;
+
+  for (const label of METRIC_LABELS) {
+    const pattern = new RegExp(label + '\\s*[:：]?\\s*([0-9][0-9,.]*(?:\\.[0-9]+)?(?:万|亿)?)');
+    const match = text.match(pattern);
+    if (match) output[label] = String(match[1] || '').trim();
+  }
+
+  return output;
+}
+
+export function extractMetricRecordFromText(input: string): ArticleMetrics {
+  return collectMetricRecord(extractMetricMapFromText(input));
+}
+
+export function isDeleteConfirmDialogTextSafe(input: string): boolean {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  const hasDeleteIntent = text.includes('删除');
+  const hasRiskNotice = text.includes('无法恢复') || text.includes('确认删除');
+  const hasConfirmAction = text.includes('确定');
+  return hasDeleteIntent && hasRiskNotice && hasConfirmAction;
 }
 
 export function isListHydrated(snapshot: {

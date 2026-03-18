@@ -2,6 +2,8 @@ import { expect, test } from 'bun:test';
 import {
   assertDeleteSafety,
   collectMetricRecord,
+  extractMetricRecordFromText,
+  isDeleteConfirmDialogTextSafe,
   isListHydrated,
   parseManageArgs,
   parseMetricValue,
@@ -25,10 +27,10 @@ test('parseMetricValue supports chinese unit values', () => {
 test('collectMetricRecord maps read like collect share comment aliases', () => {
   const metrics = collectMetricRecord({
     阅读量: '1.2万',
-    点赞: '210',
-    收藏: '38',
-    转发: '12',
-    评论: '7',
+    点赞量: '210',
+    收藏量: '38',
+    分享量: '12',
+    评论量: '7',
   });
 
   expect(metrics.read).toBe(12000);
@@ -36,6 +38,25 @@ test('collectMetricRecord maps read like collect share comment aliases', () => {
   expect(metrics.collect).toBe(38);
   expect(metrics.share).toBe(12);
   expect(metrics.comment).toBe(7);
+});
+
+test('extractMetricRecordFromText parses detail drawer metrics', () => {
+  const metrics = extractMetricRecordFromText(`
+    观看分析
+    阅读量 0
+    互动分析
+    点赞量 1
+    评论量 0
+    收藏量 2
+    分享量 3
+    转发量 4
+  `);
+
+  expect(metrics.read).toBe(0);
+  expect(metrics.like).toBe(1);
+  expect(metrics.collect).toBe(2);
+  expect(metrics.share).toBe(4);
+  expect(metrics.comment).toBe(0);
 });
 
 test('assertDeleteSafety rejects delete when confirm flag missing', () => {
@@ -46,6 +67,11 @@ test('assertDeleteSafety rejects delete when confirm flag missing', () => {
 test('assertDeleteSafety rejects delete without explicit article target', () => {
   const parsed = parseManageArgs(['delete', '--confirm']);
   expect(() => assertDeleteSafety(parsed)).toThrow('requires --article-id or --nid');
+});
+
+test('isDeleteConfirmDialogTextSafe accepts live Baijiahao delete prompt', () => {
+  expect(isDeleteConfirmDialogTextSafe('提示 您删除的内容无法恢复，确认删除？ 取消 确定')).toBe(true);
+  expect(isDeleteConfirmDialogTextSafe('登录已失效，请重新登录')).toBe(false);
 });
 
 test('isListHydrated waits for article links or sufficiently hydrated body text', () => {

@@ -116,6 +116,15 @@ export function extractMetricsFromText(text: string): ArticleMetrics {
   };
 }
 
+export function isDeleteConfirmDialogTextSafe(input: string): boolean {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text) return false;
+  const hasDeleteIntent = text.includes('删除');
+  const hasRiskNotice = text.includes('无法恢复') || text.includes('慎重考虑');
+  const hasConfirmAction = text.includes('确定');
+  return hasDeleteIntent && hasRiskNotice && hasConfirmAction;
+}
+
 export function validateDeleteArgs(options: Pick<ManageOptions, 'command' | 'confirm' | 'id' | 'title'>): void {
   if (options.command !== 'delete') return;
   if (!options.confirm) throw new Error('Delete is blocked. Re-run with --confirm after manual check.');

@@ -16,11 +16,11 @@ import {
   type CdpConnection,
 } from './cdp.ts';
 import { getToutiaoPageState, isToutiaoSessionLoggedIn } from './toutiao-auth.ts';
-import { extractMetricsFromText, parseManageArgs, validateDeleteArgs } from './toutiao-manage-parse.ts';
+import { extractMetricsFromText, isDeleteConfirmDialogTextSafe, parseManageArgs, validateDeleteArgs } from './toutiao-manage-parse.ts';
 import type { ListArticleItem, ListPageSnapshot, ManageOptions } from './toutiao-manage-types.ts';
 
 const TOUTIAO_HOME = 'https://mp.toutiao.com/';
-const DEFAULT_LIST_URL = 'https://mp.toutiao.com/profile_v4/graphic/publish';
+const DEFAULT_LIST_URL = 'https://mp.toutiao.com/profile_v4/manage/content/all';
 
 interface ExtendConfig {
   chrome_profile_path?: string;
@@ -157,19 +157,64 @@ async function scanCurrentListPage(session: ChromeSession, page: number, pageSiz
   const raw = await evaluate<any>(session, `
     (() => {
       const selectorGroups = [
+        '.genre-item.genre-item-in-all-tab',
+        '.article-card',
+        '.xigua-m-article-card-item',
+        '.post-item',
         'table tbody tr',
-        '[class*="article-list"] [class*="item"]',
-        '[class*="content-list"] [class*="item"]',
         '.list-item',
         '[data-row-key]',
       ];
+
+      const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+      const splitLines = (value) => String(value || '')
+        .split(/\\n+/)
+        .map((line) => normalize(line))
+        .filter(Boolean);
+      const ignoredLinePatterns = [
+        /^\\d{4}[./-]\\d{1,2}[./-]\\d{1,2}/,
+        /^查看数据$/,
+        /^查看评论$/,
+        /^修改$/,
+        /^更多$/,
+        /^展现\\s*\\d+/,
+        /^阅读\\s*\\d+/,
+        /^播放\\s*\\d+/,
+        /^点赞\\s*\\d+/,
+        /^评论\\s*\\d+/,
+        /^已发布$/,
+        /^审核中$/,
+        /^未通过$/,
+        /^待发布$/,
+        /^已删除$/,
+        /^已下架$/,
+        /^由文章生成$/,
+        /^首发$/,
+        /^已推送$/,
+        /^[+＋]\\d+$/,
+      ];
+      const pickTitleFromLines = (lines) => {
+        for (const line of lines) {
+          if (line.length < 2) continue;
+          if (ignoredLinePatterns.some((pattern) => pattern.test(line))) continue;
+          return line;
+        }
+        return '';
+      };
+      const parseIdFromHref = (href) => {
+        const queryMatch = String(href || '').match(/(?:item_id|group_id|article_id|id)=([0-9A-Za-z_-]+)/);
+        if (queryMatch) return queryMatch[1] || '';
+        const pathMatch = String(href || '').match(/\\/(?:item|video|i)\\/?([0-9A-Za-z_-]{8,})\\/?/i);
+        if (pathMatch) return pathMatch[1] || '';
+        return '';
+      };
 
       const candidates = [];
       const seen = new Set();
       for (const selector of selectorGroups) {
         for (const node of Array.from(document.querySelectorAll(selector))) {
           if (!(node instanceof HTMLElement)) continue;
-          const text = (node.innerText || '').replace(/\\s+/g, ' ').trim();
+          const text = normalize(node.innerText || '');
           if (!text || text.length < 4) continue;
           const rect = node.getBoundingClientRect();
           if (rect.width < 40 || rect.height < 20) continue;
@@ -180,28 +225,41 @@ async function scanCurrentListPage(session: ChromeSession, page: number, pageSiz
       }
 
       const rows = candidates.slice(0, ${Math.max(5, pageSizeHint * 3)}).map((node) => {
-        const rowText = (node.innerText || '').replace(/\\s+/g, ' ').trim();
+        const rowText = normalize(node.innerText || '');
+        const rowLines = splitLines(node.innerText || '');
         const links = Array.from(node.querySelectorAll('a'))
           .map((a) => ({
-            text: (a.textContent || '').trim(),
+            text: normalize(a.textContent || ''),
             href: a.href || '',
           }))
           .filter((entry) => entry.href || entry.text);
 
-        const primaryTitle = links
+        const exactTitleCandidates = Array.from(node.querySelectorAll('a.title, .title'))
+          .map((entry) => normalize(entry.textContent || ''))
+          .filter((text) => text.length >= 2);
+        const broadTitleCandidates = Array.from(node.querySelectorAll('[class*="title"], h1, h2, h3, h4'))
+          .map((entry) => normalize(entry.textContent || ''))
+          .filter((text) => text.length >= 2)
+          .sort((a, b) => b.length - a.length);
+        const linkTitles = links
           .map((entry) => entry.text)
           .filter((text) => text.length >= 2)
-          .sort((a, b) => b.length - a.length)[0] || rowText.slice(0, 60);
+          .sort((a, b) => b.length - a.length);
+        const primaryTitle = exactTitleCandidates[0]
+          || linkTitles[0]
+          || broadTitleCandidates[0]
+          || pickTitleFromLines(rowLines)
+          || rowText.slice(0, 60);
 
-        const preferredLink = links.find((entry) => /article|item|group|content|detail|edit/i.test(entry.href))
+        const preferredLink = links.find((entry) => /toutiao\\.com\\/(?:item|video)\\//i.test(entry.href))
           || links[0]
           || { href: '', text: '' };
 
-        const fromHref = preferredLink.href.match(/(?:item_id|group_id|article_id|id)=([0-9A-Za-z_-]+)/);
+        const fromHref = parseIdFromHref(preferredLink.href);
         const fromText = rowText.match(/\\b([0-9]{8,})\\b/);
 
         return {
-          id: fromHref ? fromHref[1] : (fromText ? fromText[1] : ''),
+          id: fromHref || (fromText ? fromText[1] : ''),
           title: primaryTitle,
           rowText,
           url: preferredLink.href || '',
@@ -236,6 +294,45 @@ async function scanCurrentListPage(session: ChromeSession, page: number, pageSiz
   };
 }
 
+async function waitForListHydration(session: ChromeSession, timeoutMs: number): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const snapshot = await evaluate<{
+      url: string;
+      itemCount: number;
+      totalCount: number | null;
+      hasEmptyLabel: boolean;
+      hasManageLabel: boolean;
+    }>(session, `
+      (() => {
+        const text = (document.body?.innerText || '').replace(/\\s+/g, ' ').trim();
+        const totalCountMatch = text.match(/共\\s*(\\d+)\\s*条内容/);
+        return {
+          url: window.location.href,
+          itemCount: document.querySelectorAll('.genre-item.genre-item-in-all-tab').length,
+          totalCount: totalCountMatch ? Number.parseInt(totalCountMatch[1] || '', 10) : null,
+          hasEmptyLabel: text.includes('暂无数据'),
+          hasManageLabel: text.includes('作品管理') && text.includes('草稿箱'),
+        };
+      })()
+    `);
+
+    if (
+      snapshot.url.includes('/profile_v4/manage/content/')
+      && snapshot.hasManageLabel
+      && (
+        snapshot.hasEmptyLabel
+        || snapshot.totalCount === 0
+        || (typeof snapshot.totalCount === 'number' && snapshot.totalCount > 0 && snapshot.itemCount >= snapshot.totalCount)
+      )
+    ) {
+      return;
+    }
+
+    await sleep(500);
+  }
+}
+
 async function tryGoNextPage(session: ChromeSession): Promise<boolean> {
   return await evaluate<boolean>(session, `
     (() => {
@@ -266,6 +363,7 @@ async function tryGoNextPage(session: ChromeSession): Promise<boolean> {
 async function listArticles(session: ChromeSession, options: ManageOptions): Promise<ListPageSnapshot[]> {
   const listUrl = options.listUrl || DEFAULT_LIST_URL;
   await navigateTo(session, listUrl, options.slowMs);
+  await waitForListHydration(session, Math.max(12000, options.slowMs * 4));
 
   const pages: ListPageSnapshot[] = [];
   for (let page = 1; page <= options.maxPages; page += 1) {
@@ -276,6 +374,7 @@ async function listArticles(session: ChromeSession, options: ManageOptions): Pro
     const moved = await tryGoNextPage(session);
     if (!moved) break;
     await sleep(options.slowMs);
+    await waitForListHydration(session, Math.max(12000, options.slowMs * 4));
   }
   return pages;
 }
@@ -293,11 +392,11 @@ function findTargetItem(items: ListArticleItem[], options: ManageOptions): ListA
 }
 
 async function getMetricsForItem(cdp: CdpConnection, item: ListArticleItem, options: ManageOptions): Promise<any> {
+  const rowMetrics = extractMetricsFromText(item.rowText || '');
   if (!item.url) {
-    const metrics = extractMetricsFromText(item.rowText || '');
     return {
       article: item,
-      metrics,
+      metrics: rowMetrics,
       source: 'list-row',
     };
   }
@@ -313,35 +412,73 @@ async function getMetricsForItem(cdp: CdpConnection, item: ListArticleItem, opti
         bodyText: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim(),
       }))()
     `);
+    const detailMetrics = extractMetricsFromText(detail.bodyText || '');
 
     return {
       article: item,
       detailUrl: detail.url,
       detailTitle: detail.title,
-      metrics: extractMetricsFromText(detail.bodyText || ''),
-      source: 'detail-page',
+      metrics: {
+        reads: rowMetrics.reads ?? detailMetrics.reads ?? 0,
+        likes: rowMetrics.likes ?? detailMetrics.likes ?? 0,
+        collects: rowMetrics.collects ?? detailMetrics.collects ?? 0,
+        shares: rowMetrics.shares ?? detailMetrics.shares ?? 0,
+        comments: rowMetrics.comments ?? detailMetrics.comments ?? 0,
+      },
+      source: 'list-row+detail-page',
     };
   } finally {
     await cdp.send('Target.closeTarget', { targetId: created.targetId }).catch(() => {});
   }
 }
 
-async function deleteItemFromCurrentList(session: ChromeSession, target: ListArticleItem): Promise<boolean> {
+async function dismissGuidePopovers(session: ChromeSession): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const dismissed = await evaluate<boolean>(session, `
+      (() => {
+        const visible = (node) => {
+          if (!(node instanceof HTMLElement)) return false;
+          const rect = node.getBoundingClientRect();
+          const style = getComputedStyle(node);
+          return rect.width > 8 && rect.height > 8 && style.display !== 'none' && style.visibility !== 'hidden';
+        };
+        const textOf = (node) => String(node && node.textContent || '').replace(/\\s+/g, ' ').trim();
+        const target = Array.from(document.querySelectorAll('button, a, [role="button"], span, div'))
+          .filter(visible)
+          .find((node) => textOf(node) === '我知道了');
+        if (!(target instanceof HTMLElement)) return false;
+        target.click();
+        return true;
+      })()
+    `);
+    if (!dismissed) break;
+    await sleep(400);
+  }
+}
+
+async function clickDeleteItemFromCurrentList(session: ChromeSession, target: ListArticleItem): Promise<boolean> {
   return await evaluate<boolean>(session, `
     (() => {
       const targetId = ${JSON.stringify(target.id)};
       const targetTitle = ${JSON.stringify(target.title)};
+      const visible = (node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 8 && rect.height > 8 && style.display !== 'none' && style.visibility !== 'hidden';
+      };
+      const textOf = (node) => String(node && node.textContent || '').replace(/\\s+/g, ' ').trim();
 
-      const rowSelectors = ['table tbody tr', '[class*="article-list"] [class*="item"]', '.list-item', '[data-row-key]'];
+      const rowSelectors = ['.genre-item.genre-item-in-all-tab', '.article-card', '.xigua-m-article-card-item', '.post-item', 'table tbody tr', '.list-item', '[data-row-key]'];
       const rows = [];
       for (const selector of rowSelectors) {
         for (const node of Array.from(document.querySelectorAll(selector))) {
-          if (node instanceof HTMLElement) rows.push(node);
+          if (visible(node)) rows.push(node);
         }
       }
 
       const targetRow = rows.find((row) => {
-        const text = (row.innerText || '').replace(/\\s+/g, ' ').trim();
+        const text = textOf(row);
         if (!text) return false;
         if (targetId && text.includes(targetId)) return true;
         if (targetTitle && text.includes(targetTitle)) return true;
@@ -349,28 +486,92 @@ async function deleteItemFromCurrentList(session: ChromeSession, target: ListArt
       });
       if (!targetRow) return false;
 
-      const actionNodes = Array.from(targetRow.querySelectorAll('button, a, [role="button"], span'))
-        .filter((node) => node instanceof HTMLElement);
-      const deleteNode = actionNodes.find((node) => {
-        const text = (node.innerText || node.textContent || '').replace(/\\s+/g, '');
-        if (!text) return false;
-        if (!text.includes('删除')) return false;
-        if (text.includes('批量')) return false;
-        return true;
-      });
-      if (!(deleteNode instanceof HTMLElement)) return false;
+      const moreNode = Array.from(targetRow.querySelectorAll('button, a, [role="button"], span, div'))
+        .filter(visible)
+        .find((node) => textOf(node) === '更多');
+      if (!(moreNode instanceof HTMLElement)) return false;
 
-      deleteNode.click();
+      moreNode.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      moreNode.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      moreNode.click();
+      return true;
+    })()
+  `);
+}
 
-      const confirmTexts = ['确认删除', '确定', '删除'];
-      const modalNodes = Array.from(document.querySelectorAll('button, a, [role="button"], span'))
-        .filter((node) => node instanceof HTMLElement);
-      const confirm = modalNodes.find((node) => {
-        const text = (node.innerText || node.textContent || '').replace(/\\s+/g, '');
-        return confirmTexts.some((keyword) => text === keyword || text.includes(keyword));
-      });
-      if (!(confirm instanceof HTMLElement)) return false;
-      confirm.click();
+async function clickDeleteItemInVisibleMenu(session: ChromeSession): Promise<boolean> {
+  return await evaluate<boolean>(session, `
+    (() => {
+      const visible = (node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 8 && rect.height > 8 && style.display !== 'none' && style.visibility !== 'hidden';
+      };
+      const textOf = (node) => String(node && node.textContent || '').replace(/\\s+/g, ' ').trim();
+      const target = Array.from(document.querySelectorAll('li, button, a, [role="button"], span, div'))
+        .filter(visible)
+        .find((node) => textOf(node) === '删除作品' || textOf(node) === '删除');
+      if (!(target instanceof HTMLElement)) return false;
+      target.click();
+      return true;
+    })()
+  `);
+}
+
+async function waitForDeleteConfirmDialog(session: ChromeSession, timeoutMs = 8000): Promise<{ text: string; buttons: string[] } | null> {
+  const started = Date.now();
+  let lastSnapshot: { text: string; buttons: string[] } | null = null;
+
+  while (Date.now() - started < timeoutMs) {
+    const snapshot = await evaluate<{ text: string; buttons: string[] } | null>(session, `
+      (() => {
+        const visible = (node) => {
+          if (!(node instanceof HTMLElement)) return false;
+          const rect = node.getBoundingClientRect();
+          const style = getComputedStyle(node);
+          return rect.width > 20 && rect.height > 20 && style.display !== 'none' && style.visibility !== 'hidden';
+        };
+        const textOf = (node) => String(node && node.textContent || '').replace(/\\s+/g, ' ').trim();
+        const dialog = Array.from(document.querySelectorAll('[role="dialog"], .semi-modal, .semi-portal .semi-modal, .byte-modal'))
+          .filter(visible)[0];
+        if (!(dialog instanceof HTMLElement)) return null;
+        return {
+          text: textOf(dialog),
+          buttons: Array.from(dialog.querySelectorAll('button, a, [role="button"], span, div')).map(textOf).filter(Boolean).slice(0, 20),
+        };
+      })()
+    `);
+
+    if (snapshot) {
+      lastSnapshot = snapshot;
+      if (isDeleteConfirmDialogTextSafe(snapshot.text)) return snapshot;
+    }
+
+    await sleep(300);
+  }
+
+  return lastSnapshot;
+}
+
+async function clickDeleteConfirm(session: ChromeSession): Promise<boolean> {
+  return await evaluate<boolean>(session, `
+    (() => {
+      const visible = (node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 8 && rect.height > 8 && style.display !== 'none' && style.visibility !== 'hidden';
+      };
+      const textOf = (node) => String(node && node.textContent || '').replace(/\\s+/g, ' ').trim();
+      const dialog = Array.from(document.querySelectorAll('[role="dialog"], .semi-modal, .semi-portal .semi-modal, .byte-modal'))
+        .filter(visible)[0];
+      if (!(dialog instanceof HTMLElement)) return false;
+      const candidate = Array.from(dialog.querySelectorAll('button, a, [role="button"], span, div'))
+        .filter(visible)
+        .find((node) => textOf(node) === '确定');
+      if (!(candidate instanceof HTMLElement)) return false;
+      candidate.click();
       return true;
     })()
   `);
@@ -448,7 +649,7 @@ async function main(): Promise<void> {
       throw new Error('Target article not found in scanned list pages. Increase --max-pages or refine --id/--title.');
     }
 
-    if (options.command === 'get') {
+  if (options.command === 'get') {
       const details = await getMetricsForItem(cdp, target, options);
       const payload = {
         command: 'get',
@@ -459,9 +660,27 @@ async function main(): Promise<void> {
       return;
     }
 
-    const clicked = await deleteItemFromCurrentList(session, target);
-    if (!clicked) {
-      throw new Error('Could not click delete and confirm actions from the current page.');
+    await dismissGuidePopovers(session);
+    const clickedEntry = await clickDeleteItemFromCurrentList(session, target);
+    if (!clickedEntry) {
+      throw new Error('Could not open the row actions for delete from the current page.');
+    }
+    await sleep(Math.max(800, Math.floor(options.slowMs * 0.6)));
+
+    const clickedDelete = await clickDeleteItemInVisibleMenu(session);
+    if (!clickedDelete) {
+      throw new Error('Delete menu item did not appear after clicking 更多; aborting without confirm.');
+    }
+    await sleep(Math.max(800, Math.floor(options.slowMs * 0.6)));
+
+    const dialog = await waitForDeleteConfirmDialog(session);
+    if (!dialog || !isDeleteConfirmDialogTextSafe(dialog.text)) {
+      throw new Error(`Unsafe delete dialog state detected; aborting without confirm. Dialog text: ${dialog?.text || '(missing)'}`);
+    }
+
+    const clickedConfirm = await clickDeleteConfirm(session);
+    if (!clickedConfirm) {
+      throw new Error('Delete confirmation button not found inside the visible dialog.');
     }
 
     await sleep(Math.max(1500, options.slowMs));

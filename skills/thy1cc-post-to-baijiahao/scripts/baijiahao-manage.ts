@@ -17,7 +17,10 @@ import { getBaijiahaoPageState, isBaijiahaoSessionLoggedIn } from './baijiahao-a
 import {
   assertDeleteSafety,
   collectMetricRecord,
+  extractMetricRecordFromText,
+  isDeleteConfirmDialogTextSafe,
   isListHydrated,
+  METRIC_LABELS,
   parseManageArgs,
 } from './baijiahao-manage-parse.ts';
 import type { ArticleMetrics, BaijiahaoArticleItem, ManageOptions } from './baijiahao-manage-types.ts';
@@ -331,9 +334,8 @@ async function collectListPageItems(session: ChromeSession): Promise<BaijiahaoAr
       };
 
       const extractMetricText = (text) => {
-        const labels = ['阅读量', '阅读', '点赞', '收藏', '转发', '分享', '评论'];
         const output = {};
-        for (const label of labels) {
+        for (const label of ${JSON.stringify(METRIC_LABELS)}) {
           const pattern = new RegExp(label + '\\\\s*[:：]?\\\\s*([0-9][0-9,.]*(?:\\\\.[0-9]+)?(?:万|亿)?)');
           const match = text.match(pattern);
           if (match) output[label] = normalize(match[1]);
@@ -430,21 +432,108 @@ async function collectListPages(session: ChromeSession, options: ManageOptions):
 }
 
 async function collectMetricsFromCurrentPage(session: ChromeSession): Promise<ArticleMetrics> {
-  const metricText = await evaluate<Record<string, string>>(session, `
+  const pageText = await evaluate<string>(session, `
     (function() {
-      const output = {};
-      const text = String(document.body && document.body.innerText || '').replace(/\\s+/g, ' ').trim();
-      const labels = ['阅读量', '阅读', '点赞', '收藏', '转发', '分享', '评论'];
-      for (const label of labels) {
-        const pattern = new RegExp(label + '\\\\s*[:：]?\\\\s*([0-9][0-9,.]*(?:\\\\.[0-9]+)?(?:万|亿)?)');
-        const match = text.match(pattern);
-        if (match) output[label] = String(match[1] || '').trim();
-      }
-      return output;
+      return String(document.body && document.body.innerText || '');
     })()
   `);
 
-  return collectMetricRecord(metricText);
+  return extractMetricRecordFromText(pageText);
+}
+
+async function clickDetailDataInCurrentPage(session: ChromeSession, target: BaijiahaoArticleItem): Promise<boolean> {
+  return await evaluate<boolean>(session, `
+    (function() {
+      const norm = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+      const visible = (node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const rect = node.getBoundingClientRect();
+        const style = window.getComputedStyle(node);
+        return rect.width > 8 && rect.height > 8 && style.display !== 'none' && style.visibility !== 'hidden' && style.pointerEvents !== 'none';
+      };
+
+      const targetArticleId = ${JSON.stringify(target.articleId)};
+      const targetNid = ${JSON.stringify(target.nid)};
+      const targetTitle = ${JSON.stringify(target.title)};
+
+      const rows = Array.from(document.querySelectorAll('.client_pages_content_v2_components_articleItem, .article-item, tr, li')).filter(visible);
+      const row = rows.find((node) => {
+        const anchors = Array.from(node.querySelectorAll('a[href]'));
+        const matchedById = anchors.some((anchor) => {
+          const href = String(anchor.getAttribute('href') || anchor.href || '');
+          return (targetArticleId && href.includes('article_id=' + targetArticleId))
+            || (targetNid && href.includes('id=' + targetNid));
+        });
+        if (matchedById) return true;
+        const text = norm(node.textContent);
+        return Boolean(targetTitle && text.includes(targetTitle));
+      });
+      if (!row) return false;
+
+      const exact = row.querySelector('span.article-action-btn[data-urlkey="内容管理-详细数据点击"]');
+      if (exact instanceof HTMLElement && visible(exact)) {
+        exact.click();
+        return true;
+      }
+
+      const buttons = Array.from(row.querySelectorAll('button,a,[role="button"],span,div'))
+        .filter(visible)
+        .filter((node) => /详细数据/.test(norm(node.textContent)))
+        .sort((a, b) => norm(a.textContent).length - norm(b.textContent).length);
+      const targetButton = buttons[0];
+      if (!targetButton) return false;
+      targetButton.click();
+      return true;
+    })()
+  `);
+}
+
+async function waitForDetailDrawerMetrics(session: ChromeSession, target: BaijiahaoArticleItem, timeoutMs = 12000): Promise<ArticleMetrics | null> {
+  const started = Date.now();
+  let lastMetrics: ArticleMetrics | null = null;
+
+  while (Date.now() - started < timeoutMs) {
+    const snapshot = await evaluate<{
+      open: boolean;
+      titleMatched: boolean;
+      hasAnalysisTabs: boolean;
+      text: string;
+    } | null>(session, `
+      (function() {
+        const norm = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+        const drawer = document.querySelector('.cheetah-drawer-open .client_pages_content_v2_components_drawerDetail')
+          || document.querySelector('.cheetah-drawer-open .client_pages_content_v2_components_drawerDetail_acticleInfo')?.closest('.cheetah-drawer-open')
+          || document.querySelector('.cheetah-drawer-open');
+        if (!drawer) {
+          return {
+            open: false,
+            titleMatched: false,
+            hasAnalysisTabs: false,
+            text: '',
+          };
+        }
+
+        const text = norm(drawer.textContent);
+        return {
+          open: true,
+          titleMatched: text.includes(${JSON.stringify(target.title)}),
+          hasAnalysisTabs: text.includes('观看分析') && text.includes('互动分析'),
+          text,
+        };
+      })()
+    `);
+
+    if (snapshot?.open) {
+      lastMetrics = extractMetricRecordFromText(snapshot.text || '');
+      if (snapshot.titleMatched && snapshot.hasAnalysisTabs) {
+        return lastMetrics;
+      }
+    }
+
+    await sleep(500);
+  }
+
+  return lastMetrics;
 }
 
 async function clickDeleteInCurrentPage(session: ChromeSession, target: BaijiahaoArticleItem): Promise<boolean> {
@@ -462,22 +551,63 @@ async function clickDeleteInCurrentPage(session: ChromeSession, target: Baijiaha
       const targetNid = ${JSON.stringify(target.nid)};
       const targetTitle = ${JSON.stringify(target.title)};
 
-      const anchors = Array.from(document.querySelectorAll('a[href]'));
-      const candidate = anchors.find((node) => targetArticleId && node.href.includes('article_id=' + targetArticleId))
-        || anchors.find((node) => targetNid && node.href.includes('id=' + targetNid))
-        || anchors.find((node) => targetTitle && textOf(node).includes(targetTitle));
-      if (!candidate) return false;
+      const rows = Array.from(document.querySelectorAll('.client_pages_content_v2_components_articleItem, .article-item, tr, li')).filter(visible);
+      const row = rows.find((node) => {
+        const text = textOf(node);
+        if (targetTitle && text.includes(targetTitle)) return true;
+        const anchors = Array.from(node.querySelectorAll('a[href]'));
+        return anchors.some((anchor) => {
+          const href = String(anchor.getAttribute('href') || anchor.href || '');
+          return (targetArticleId && href.includes('article_id=' + targetArticleId))
+            || (targetNid && href.includes('id=' + targetNid));
+        });
+      });
+      if (!row) return false;
 
-      const row = candidate.closest('tr,li,.article-item,[class*="item"],[class*="list"],[class*="row"]') || candidate.parentElement || candidate;
       const buttons = Array.from(row.querySelectorAll('button,a,[role="button"],span,div'))
         .filter(visible)
-        .filter((node) => /删除/.test(textOf(node)));
+        .filter((node) => textOf(node) === '删除');
       const targetButton = buttons[0];
       if (!targetButton) return false;
       targetButton.click();
       return true;
     })()
   `);
+}
+
+async function waitForDeleteConfirmDialog(session: ChromeSession, timeoutMs = 8000): Promise<{ text: string; buttons: string[] } | null> {
+  const started = Date.now();
+  let lastSnapshot: { text: string; buttons: string[] } | null = null;
+
+  while (Date.now() - started < timeoutMs) {
+    const snapshot = await evaluate<{ text: string; buttons: string[] } | null>(session, `
+      (function() {
+        const visible = (node) => {
+          if (!(node instanceof HTMLElement)) return false;
+          const rect = node.getBoundingClientRect();
+          const style = window.getComputedStyle(node);
+          return rect.width > 20 && rect.height > 20 && style.display !== 'none' && style.visibility !== 'hidden';
+        };
+        const textOf = (node) => String(node && node.textContent || '').replace(/\\s+/g, ' ').trim();
+        const dialog = Array.from(document.querySelectorAll('[role="dialog"], .cheetah-dialog-box, .cheetah-modal, .ant-modal, .semi-modal, .cheetah-confirm'))
+          .filter(visible)[0];
+        if (!(dialog instanceof HTMLElement)) return null;
+        return {
+          text: textOf(dialog),
+          buttons: Array.from(dialog.querySelectorAll('button,a,[role="button"],span,div')).map(textOf).filter(Boolean).slice(0, 20),
+        };
+      })()
+    `);
+
+    if (snapshot) {
+      lastSnapshot = snapshot;
+      if (isDeleteConfirmDialogTextSafe(snapshot.text)) return snapshot;
+    }
+
+    await sleep(300);
+  }
+
+  return lastSnapshot;
 }
 
 async function clickDeleteConfirm(session: ChromeSession): Promise<boolean> {
@@ -491,13 +621,15 @@ async function clickDeleteConfirm(session: ChromeSession): Promise<boolean> {
       };
       const textOf = (node) => String(node && node.textContent || '').replace(/\\s+/g, ' ').trim();
 
-      const buttons = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'))
-        .filter(visible)
-        .filter((node) => /确认删除|确定删除|确定|删除/.test(textOf(node)));
-      const candidate = buttons.find((node) => /确认删除|确定删除/.test(textOf(node)))
-        || buttons.find((node) => /确定/.test(textOf(node)))
-        || buttons.find((node) => /删除/.test(textOf(node)));
-      if (!candidate) return false;
+      const dialog = Array.from(document.querySelectorAll('[role="dialog"], .cheetah-dialog-box, .cheetah-modal, .ant-modal, .semi-modal, .cheetah-confirm'))
+        .filter(visible)[0];
+      if (!(dialog instanceof HTMLElement)) return false;
+
+      const buttons = Array.from(dialog.querySelectorAll('button,a,[role="button"],span,div'))
+        .filter(visible);
+      const candidate = buttons.find((node) => textOf(node) === '确定')
+        || buttons.find((node) => textOf(node) === '确认删除');
+      if (!(candidate instanceof HTMLElement)) return false;
       candidate.click();
       return true;
     })()
@@ -547,6 +679,28 @@ async function runGet(session: ChromeSession, options: ManageOptions): Promise<v
   }
 
   let metrics = collectMetricRecord(target.metricText);
+  await navigate(session, target.pageUrl || buildListUrl(options, 1), options.slowMs);
+  await assertNoRiskChallenge(session);
+
+  let hydrated = await waitForListHydration(session);
+  if (!hydrated) {
+    await ensureContentManagePage(session, options.slowMs);
+    await navigate(session, target.pageUrl || buildListUrl(options, 1), options.slowMs);
+    await assertNoRiskChallenge(session);
+    hydrated = await waitForListHydration(session);
+  }
+
+  if (hydrated) {
+    const clickedDetail = await clickDetailDataInCurrentPage(session, target);
+    if (clickedDetail) {
+      await slowDown(options.slowMs);
+      const detailMetrics = await waitForDetailDrawerMetrics(session, target);
+      if (detailMetrics) {
+        metrics = mergeMetrics(metrics, detailMetrics);
+      }
+    }
+  }
+
   if (isMetricsEmpty(metrics) && target.url) {
     await navigate(session, target.url, options.slowMs);
     await assertNoRiskChallenge(session);
@@ -586,6 +740,10 @@ async function runDelete(session: ChromeSession, options: ManageOptions): Promis
   }
 
   await slowDown(options.slowMs);
+  const dialog = await waitForDeleteConfirmDialog(session);
+  if (!dialog || !isDeleteConfirmDialogTextSafe(dialog.text)) {
+    throw new Error(`Unsafe delete dialog state detected; aborting without confirm. Dialog text: ${dialog?.text || '(missing)'}`);
+  }
   const clickedConfirm = await clickDeleteConfirm(session);
   if (!clickedConfirm) {
     throw new Error('Delete confirmation button not found.');
