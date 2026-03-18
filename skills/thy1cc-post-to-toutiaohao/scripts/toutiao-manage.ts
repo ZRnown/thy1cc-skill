@@ -94,12 +94,14 @@ Common options:
   --slow-ms <ms>        Delay between browser actions (default: 2200)
   --json                Output JSON (default)
   --text                Output text summary
+  --dry-run-delete      Probe delete modal and safety check only, never click final confirm
   --help                Show this help
 
 Delete safety:
-  delete requires --confirm and --id or --title.
+  delete requires exactly one of --confirm or --dry-run-delete, plus --id or --title.
   example:
     node --experimental-strip-types toutiao-manage.ts delete --id 12345 --confirm
+    node --experimental-strip-types toutiao-manage.ts delete --id 12345 --dry-run-delete
 `);
 }
 
@@ -587,6 +589,7 @@ function formatTextSummary(payload: any): string {
     return `get done: ${payload.article?.title || payload.article?.id || ''}`;
   }
   if (payload.command === 'delete') {
+    if (payload.mode === 'dry-run-delete') return `delete dry-run done: ${payload.article?.title || payload.article?.id || ''}`;
     return `delete done: ${payload.deleted ? 'success' : 'failed'}`;
   }
   return '';
@@ -676,6 +679,22 @@ async function main(): Promise<void> {
     const dialog = await waitForDeleteConfirmDialog(session);
     if (!dialog || !isDeleteConfirmDialogTextSafe(dialog.text)) {
       throw new Error(`Unsafe delete dialog state detected; aborting without confirm. Dialog text: ${dialog?.text || '(missing)'}`);
+    }
+
+    if (options.dryRunDelete) {
+      const payload = {
+        command: 'delete',
+        mode: 'dry-run-delete',
+        article: target,
+        safetyCheck: {
+          passed: true,
+          dialogText: dialog.text,
+          dialogButtons: dialog.buttons,
+        },
+      };
+      if (options.json) console.log(JSON.stringify(payload, null, 2));
+      else console.log(formatTextSummary(payload));
+      return;
     }
 
     const clickedConfirm = await clickDeleteConfirm(session);

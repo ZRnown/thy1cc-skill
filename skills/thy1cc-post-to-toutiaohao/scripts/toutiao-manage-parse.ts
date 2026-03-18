@@ -21,6 +21,7 @@ export function parseManageArgs(argv: string[]): ManageOptions {
     command,
     help: false,
     confirm: false,
+    dryRunDelete: false,
     maxPages: 1,
     pageSizeHint: 20,
     slowMs: 2200,
@@ -43,6 +44,9 @@ export function parseManageArgs(argv: string[]): ManageOptions {
         break;
       case '--confirm':
         options.confirm = true;
+        break;
+      case '--dry-run-delete':
+        options.dryRunDelete = true;
         break;
       case '--max-pages':
         options.maxPages = toPositiveInt(argv[++i], '--max-pages');
@@ -125,8 +129,13 @@ export function isDeleteConfirmDialogTextSafe(input: string): boolean {
   return hasDeleteIntent && hasRiskNotice && hasConfirmAction;
 }
 
-export function validateDeleteArgs(options: Pick<ManageOptions, 'command' | 'confirm' | 'id' | 'title'>): void {
+export function validateDeleteArgs(options: Pick<ManageOptions, 'command' | 'confirm' | 'dryRunDelete' | 'id' | 'title'>): void {
   if (options.command !== 'delete') return;
-  if (!options.confirm) throw new Error('Delete is blocked. Re-run with --confirm after manual check.');
+  if (options.confirm && options.dryRunDelete) {
+    throw new Error('Delete arguments conflict: --confirm cannot be combined with --dry-run-delete.');
+  }
+  if (!options.confirm && !options.dryRunDelete) {
+    throw new Error('Delete is blocked. Re-run with --confirm after manual check, or use --dry-run-delete.');
+  }
   if (!options.id && !options.title) throw new Error('Delete requires --id or --title to target exactly one article.');
 }

@@ -41,6 +41,7 @@ export interface DeleteCommandOptions extends ManageCommonOptions {
   articleId?: string;
   title?: string;
   confirm: boolean;
+  dryRunDelete: boolean;
 }
 
 export type ManageCommandOptions = ListCommandOptions | GetCommandOptions | DeleteCommandOptions;

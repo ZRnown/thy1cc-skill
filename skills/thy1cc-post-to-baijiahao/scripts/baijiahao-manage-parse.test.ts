@@ -16,6 +16,15 @@ test('parseManageArgs resolves list defaults and accepts pagination flags', () =
   expect(parsed.pageSize).toBe(20);
   expect(parsed.search).toBe('测试');
   expect(parsed.confirm).toBe(false);
+  expect(parsed.dryRunDelete).toBe(false);
+});
+
+test('parseManageArgs accepts dry-run-delete for delete command', () => {
+  const parsed = parseManageArgs(['delete', '--nid', '1859', '--dry-run-delete']);
+  expect(parsed.command).toBe('delete');
+  expect(parsed.nid).toBe('1859');
+  expect(parsed.confirm).toBe(false);
+  expect(parsed.dryRunDelete).toBe(true);
 });
 
 test('parseMetricValue supports chinese unit values', () => {
@@ -61,12 +70,17 @@ test('extractMetricRecordFromText parses detail drawer metrics', () => {
 
 test('assertDeleteSafety rejects delete when confirm flag missing', () => {
   const parsed = parseManageArgs(['delete', '--article-id', '123']);
-  expect(() => assertDeleteSafety(parsed)).toThrow('requires --confirm');
+  expect(() => assertDeleteSafety(parsed)).toThrow('requires --confirm or --dry-run-delete');
 });
 
 test('assertDeleteSafety rejects delete without explicit article target', () => {
   const parsed = parseManageArgs(['delete', '--confirm']);
   expect(() => assertDeleteSafety(parsed)).toThrow('requires --article-id or --nid');
+});
+
+test('assertDeleteSafety rejects confirm and dry-run-delete together', () => {
+  const parsed = parseManageArgs(['delete', '--confirm', '--dry-run-delete', '--article-id', '123']);
+  expect(() => assertDeleteSafety(parsed)).toThrow('cannot be used together');
 });
 
 test('isDeleteConfirmDialogTextSafe accepts live Baijiahao delete prompt', () => {

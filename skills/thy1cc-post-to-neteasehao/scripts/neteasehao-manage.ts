@@ -30,6 +30,7 @@ function printHelp(): void {
   node --experimental-strip-types neteasehao-manage.ts list [--max-pages 3] [--slow-ms 1200]
   node --experimental-strip-types neteasehao-manage.ts get --article-id <id> [--slow-ms 1200]
   node --experimental-strip-types neteasehao-manage.ts delete --article-id <id> --confirm
+  node --experimental-strip-types neteasehao-manage.ts delete --article-id <id> --dry-run-delete
 
 Commands:
   list                List article summaries from content-management pages
@@ -50,7 +51,8 @@ get options:
 delete options:
   --article-id <id>   Target article id
   --title <text>      Target title keyword
-  --confirm           Required for deletion
+  --confirm           Execute final confirmation click
+  --dry-run-delete    Validate delete flow without final confirmation click
 `);
 }
 
@@ -323,6 +325,41 @@ async function clickDeleteConfirm(session: ChromeSession): Promise<boolean> {
   `);
 }
 
+async function collectDeleteDialogSnapshot(session: ChromeSession): Promise<{
+  visible: boolean;
+  text: string;
+  hasConfirmButton: boolean;
+}> {
+  return await evaluate(session, `
+    (function() {
+      const normalize = (v) => String(v || '').replace(/\\s+/g, ' ').trim();
+      const dialogs = Array.from(document.querySelectorAll('[role="dialog"], .modal, .dialog, .ant-modal, .semi-modal'));
+      const visibleDialog = dialogs.find((node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 80 && rect.height > 40 && style.display !== 'none' && style.visibility !== 'hidden';
+      });
+
+      if (!visibleDialog) {
+        return {
+          visible: false,
+          text: '',
+          hasConfirmButton: false,
+        };
+      }
+
+      const buttons = Array.from(visibleDialog.querySelectorAll('button, a, [role="button"]'));
+      const hasConfirmButton = buttons.some((node) => /确认删除|确定删除|确认|删除/.test(normalize(node.textContent || '')));
+      return {
+        visible: true,
+        text: normalize(visibleDialog.textContent || ''),
+        hasConfirmButton,
+      };
+    })()
+  `);
+}
+
 async function verifyDeleted(session: ChromeSession, target: { articleId?: string; title?: string }): Promise<boolean> {
   const payload = JSON.stringify(target);
   return await evaluate<boolean>(session, `
@@ -390,6 +427,27 @@ async function runDelete(session: ChromeSession, opts: RuntimeOptions): Promise<
   const clickedDelete = await clickDeleteAction(session, cmd);
   if (!clickedDelete) throw new Error('Delete action not found for target row.');
   await sleep(opts.slowMs);
+
+  const deleteDialog = await collectDeleteDialogSnapshot(session);
+
+  if (cmd.dryRunDelete) {
+    console.log(JSON.stringify({
+      mode: 'delete',
+      dryRunDelete: true,
+      target: {
+        articleId: targetRow.articleId,
+        title: targetRow.title,
+        url: targetRow.url,
+      },
+      verification: {
+        deleteActionClicked: true,
+        confirmDialogVisible: deleteDialog.visible,
+        confirmButtonVisible: deleteDialog.hasConfirmButton,
+        dialogText: deleteDialog.text,
+      },
+    }, null, 2));
+    return;
+  }
 
   const confirmed = await clickDeleteConfirm(session);
   if (!confirmed) throw new Error('Delete confirmation dialog not found.');

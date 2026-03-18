@@ -9,8 +9,23 @@ test('parseManageCommand parses list defaults', () => {
   assert.equal(parsed.slowMs, 1200);
 });
 
-test('parseManageCommand requires --confirm for delete', () => {
+test('parseManageCommand requires --confirm or --dry-run-delete for delete', () => {
   assert.throws(() => parseManageCommand(['delete', '--article-id', '123']));
+});
+
+test('parseManageCommand accepts --dry-run-delete for delete mode', () => {
+  const parsed = parseManageCommand(['delete', '--article-id', '123', '--dry-run-delete']);
+  assert.equal(parsed.mode, 'delete');
+  assert.equal(parsed.articleId, '123');
+  assert.equal(parsed.dryRunDelete, true);
+  assert.equal(parsed.confirm, false);
+});
+
+test('parseManageCommand rejects using --confirm with --dry-run-delete together', () => {
+  assert.throws(
+    () => parseManageCommand(['delete', '--article-id', '123', '--confirm', '--dry-run-delete']),
+    /cannot be used together/i,
+  );
 });
 
 test('extractMetricsFromText extracts canonical metrics', () => {

@@ -6,6 +6,7 @@ export interface ManageOptions {
   id?: string;
   title?: string;
   confirm: boolean;
+  dryRunDelete: boolean;
   maxPages: number;
   pageSizeHint: number;
   cdpPort?: number;

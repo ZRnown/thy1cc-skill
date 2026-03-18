@@ -27,6 +27,14 @@ test('parseManageArgs parses get + delete identifiers', () => {
   assert.equal(deleteParsed.confirm, true);
 });
 
+test('parseManageArgs parses dry-run-delete flag', () => {
+  const parsed = parseManageArgs(['delete', '--id', '12345', '--dry-run-delete']);
+  assert.equal(parsed.command, 'delete');
+  assert.equal(parsed.id, '12345');
+  assert.equal(parsed.dryRunDelete, true);
+  assert.equal(parsed.confirm, false);
+});
+
 test('normalizeMetricValue supports plain numbers and Chinese units', () => {
   assert.equal(normalizeMetricValue('1,203'), 1203);
   assert.equal(normalizeMetricValue('2.5万'), 25000);
@@ -44,9 +52,17 @@ test('extractMetricsFromText captures read/like/collect/share', () => {
 });
 
 test('validateDeleteArgs requires explicit confirm and an identifier', () => {
-  assert.throws(() => validateDeleteArgs({ command: 'delete', confirm: false }), /--confirm/);
-  assert.throws(() => validateDeleteArgs({ command: 'delete', confirm: true }), /--id or --title/);
-  assert.doesNotThrow(() => validateDeleteArgs({ command: 'delete', confirm: true, id: 'abc' }));
+  assert.throws(() => validateDeleteArgs({ command: 'delete', confirm: false, dryRunDelete: false }), /--confirm/);
+  assert.throws(() => validateDeleteArgs({ command: 'delete', confirm: true, dryRunDelete: false }), /--id or --title/);
+  assert.doesNotThrow(() => validateDeleteArgs({ command: 'delete', confirm: true, dryRunDelete: false, id: 'abc' }));
+});
+
+test('validateDeleteArgs allows dry-run-delete and rejects confirm conflict', () => {
+  assert.doesNotThrow(() => validateDeleteArgs({ command: 'delete', confirm: false, dryRunDelete: true, id: 'abc' }));
+  assert.throws(
+    () => validateDeleteArgs({ command: 'delete', confirm: true, dryRunDelete: true, id: 'abc' }),
+    /cannot be combined/
+  );
 });
 
 test('isDeleteConfirmDialogTextSafe accepts live Toutiao delete prompt', () => {

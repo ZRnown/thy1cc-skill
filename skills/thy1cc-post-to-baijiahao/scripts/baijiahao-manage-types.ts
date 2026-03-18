@@ -31,5 +31,6 @@ export interface ManageOptions {
   cdpPort?: number;
   profileDir: string;
   confirm: boolean;
+  dryRunDelete: boolean;
   slowMs: number;
 }

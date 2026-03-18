@@ -30,6 +30,7 @@ export function parseManageArgs(argv: string[]): ManageOptions {
     pageSize: 10,
     profileDir: '',
     confirm: false,
+    dryRunDelete: false,
     slowMs: 1600,
   };
 
@@ -66,6 +67,9 @@ export function parseManageArgs(argv: string[]): ManageOptions {
       case '--confirm':
         options.confirm = true;
         break;
+      case '--dry-run-delete':
+        options.dryRunDelete = true;
+        break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
@@ -76,8 +80,11 @@ export function parseManageArgs(argv: string[]): ManageOptions {
 
 export function assertDeleteSafety(options: ManageOptions): void {
   if (options.command !== 'delete') return;
-  if (!options.confirm) {
-    throw new Error('Delete command requires --confirm.');
+  if (options.confirm && options.dryRunDelete) {
+    throw new Error('Delete command flags --confirm and --dry-run-delete cannot be used together.');
+  }
+  if (!options.confirm && !options.dryRunDelete) {
+    throw new Error('Delete command requires --confirm or --dry-run-delete.');
   }
   if (!options.articleId && !options.nid) {
     throw new Error('Delete command requires --article-id or --nid.');

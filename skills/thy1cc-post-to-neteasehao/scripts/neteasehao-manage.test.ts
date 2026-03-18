@@ -17,6 +17,7 @@ test('manage script help includes list/get/delete and confirm guard', () => {
   assert.match(output, /get/);
   assert.match(output, /delete/);
   assert.match(output, /--confirm/);
+  assert.match(output, /--dry-run-delete/);
 });
 
 test('source uses the current hash-based content-manage route', () => {
@@ -24,4 +25,5 @@ test('source uses the current hash-based content-manage route', () => {
   const source = fs.readFileSync(scriptPath, 'utf-8');
 
   assert.match(source, /https:\/\/mp\.163\.com\/#\/content-manage/);
+  assert.match(source, /dryRunDelete/);
 });

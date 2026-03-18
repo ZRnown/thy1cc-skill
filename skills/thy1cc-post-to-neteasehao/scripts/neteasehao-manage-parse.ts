@@ -71,6 +71,7 @@ export function parseManageCommand(argv: string[]): ManageCommandOptions {
   let title: string | undefined;
   let url: string | undefined;
   let confirm = false;
+  let dryRunDelete = false;
 
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -99,6 +100,9 @@ export function parseManageCommand(argv: string[]): ManageCommandOptions {
       case '--confirm':
         confirm = true;
         break;
+      case '--dry-run-delete':
+        dryRunDelete = true;
+        break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
@@ -118,9 +122,12 @@ export function parseManageCommand(argv: string[]): ManageCommandOptions {
   if (!articleId && !title) {
     throw new Error('delete mode requires --article-id or --title');
   }
-  if (!confirm) {
-    throw new Error('delete mode requires explicit --confirm');
+  if (confirm && dryRunDelete) {
+    throw new Error('delete mode: --confirm and --dry-run-delete cannot be used together');
+  }
+  if (!confirm && !dryRunDelete) {
+    throw new Error('delete mode requires explicit --confirm or --dry-run-delete');
   }
 
-  return { mode, cdpPort, profileDir, maxPages, slowMs, articleId, title, confirm };
+  return { mode, cdpPort, profileDir, maxPages, slowMs, articleId, title, confirm, dryRunDelete };
 }

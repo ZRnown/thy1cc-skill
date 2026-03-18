@@ -11,7 +11,7 @@ This skill is browser-led and safety-first. It reuses a logged-in Chrome session
 
 `delete` is intentionally strict:
 
-- requires `--confirm`
+- requires exactly one of `--confirm` or `--dry-run-delete`
 - requires `--id` or `--title`
 - verifies the target is no longer visible after deletion
 
@@ -87,11 +87,19 @@ node --experimental-strip-types ${SKILL_DIR}/scripts/toutiao-manage.ts delete \
   --title "你的文章标题" --confirm --max-pages 2
 ```
 
+Dry-run delete (no final confirm click):
+
+```bash
+node --experimental-strip-types ${SKILL_DIR}/scripts/toutiao-manage.ts delete \
+  --id 1234567890 --dry-run-delete --max-pages 2
+```
+
 ## Safety Defaults
 
 - Slow mode is enabled by default (`--slow-ms 2200`).
 - No bulk delete mode is provided.
 - No high-frequency backend API polling is used.
+- `--confirm` and `--dry-run-delete` are mutually exclusive.
 - If login expires or a verification page appears, the script fails fast for manual recovery.
 
 ## Output

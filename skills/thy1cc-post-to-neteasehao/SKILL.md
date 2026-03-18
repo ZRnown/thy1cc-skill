@@ -47,6 +47,7 @@ Template: `references/config/first-time-setup.md`
 node --experimental-strip-types ${SKILL_DIR}/scripts/neteasehao-manage.ts list --max-pages 3
 node --experimental-strip-types ${SKILL_DIR}/scripts/neteasehao-manage.ts get --article-id 123456
 node --experimental-strip-types ${SKILL_DIR}/scripts/neteasehao-manage.ts delete --article-id 123456 --confirm
+node --experimental-strip-types ${SKILL_DIR}/scripts/neteasehao-manage.ts delete --article-id 123456 --dry-run-delete
 ```
 
 ## Safety Rules
@@ -54,6 +55,8 @@ node --experimental-strip-types ${SKILL_DIR}/scripts/neteasehao-manage.ts delete
 - Keep actions serial and slow (`--slow-ms`)
 - Stop immediately when risk-control markers appear (captcha/security prompts)
 - Never run delete without `--confirm`
+- Use `--dry-run-delete` to verify delete chain without final confirm click
+- `--confirm` and `--dry-run-delete` are mutually exclusive
 - Default behavior is non-destructive
 
 ## Notes

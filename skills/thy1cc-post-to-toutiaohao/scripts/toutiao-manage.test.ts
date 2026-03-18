@@ -16,6 +16,7 @@ test('help output includes list/get/delete and confirm safety flag', () => {
   assert.match(output, /\bget\b/);
   assert.match(output, /\bdelete\b/);
   assert.match(output, /--confirm/);
+  assert.match(output, /--dry-run-delete/);
 });
 
 test('source targets the current content-management route and card selectors', () => {
@@ -30,4 +31,6 @@ test('source targets the current content-management route and card selectors', (
   assert.match(source, /dialog\.querySelectorAll\('button, a, \[role="button"\], span, div'\)/);
   assert.match(source, /删除作品/);
   assert.doesNotMatch(source, /确定删除此内容/);
+  assert.match(source, /if \(options\.dryRunDelete\)/);
+  assert.match(source, /dry-run-delete/);
 });

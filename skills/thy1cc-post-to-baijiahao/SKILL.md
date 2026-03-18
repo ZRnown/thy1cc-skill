@@ -183,6 +183,7 @@ Use this when you need creator-side operations on existing works.
 npx -y bun ${SKILL_DIR}/scripts/baijiahao-manage.ts list --max-pages 3 --page-size 10
 npx -y bun ${SKILL_DIR}/scripts/baijiahao-manage.ts get --article-id 1859795452973012305
 npx -y bun ${SKILL_DIR}/scripts/baijiahao-manage.ts delete --article-id 1859795452973012305 --confirm
+npx -y bun ${SKILL_DIR}/scripts/baijiahao-manage.ts delete --article-id 1859795452973012305 --dry-run-delete
 ```
 
 `list` returns title/status/time/article_id/nid/url with best-effort metrics extracted from page DOM.
@@ -192,6 +193,8 @@ npx -y bun ${SKILL_DIR}/scripts/baijiahao-manage.ts delete --article-id 18597954
 `delete` is intentionally narrow and safety-first:
 
 - Requires `--confirm`
+- Or use `--dry-run-delete` to validate modal safety without final confirm click
+- `--confirm` and `--dry-run-delete` are mutually exclusive
 - Requires explicit target (`--article-id` or `--nid`)
 - Operates on one article per run
 - Performs post-delete page recheck before reporting success

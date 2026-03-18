@@ -51,6 +51,7 @@ function printHelp(): void {
   npx -y bun baijiahao-manage.ts list [--search 关键词] [--max-pages 3] [--page-size 10]
   npx -y bun baijiahao-manage.ts get --article-id 123456
   npx -y bun baijiahao-manage.ts delete --article-id 123456 --confirm
+  npx -y bun baijiahao-manage.ts delete --article-id 123456 --dry-run-delete
 
 Commands:
   list                 Browser-led content list crawl (slow, paged)
@@ -67,7 +68,8 @@ Flags:
   --profile-dir <dir>  Chrome profile dir override
   --cdp-port <port>    Reuse existing Chrome debug port
   --slow-ms <ms>       Delay between actions (default: 1600)
-  --confirm            Required for delete
+  --confirm            Required for real delete
+  --dry-run-delete     Validate delete dialog safety without final confirm click
   --help               Show help
 `);
 }
@@ -617,7 +619,7 @@ async function clickDeleteConfirm(session: ChromeSession): Promise<boolean> {
         if (!(node instanceof HTMLElement)) return false;
         const rect = node.getBoundingClientRect();
         const style = window.getComputedStyle(node);
-        return rect.width > 8 && rect.height > 8 && style.display !== 'none' && style.visibility !== 'hidden' && style.pointerEvents !== 'none';
+        return rect.width > 8 && rect.height > 8 && style.display !== 'none' && style.visibility !== 'hidden';
       };
       const textOf = (node) => String(node && node.textContent || '').replace(/\\s+/g, ' ').trim();
 
@@ -627,8 +629,42 @@ async function clickDeleteConfirm(session: ChromeSession): Promise<boolean> {
 
       const buttons = Array.from(dialog.querySelectorAll('button,a,[role="button"],span,div'))
         .filter(visible);
+      const fallbackButtons = Array.from(document.querySelectorAll('button,a,[role="button"],span,div'))
+        .filter(visible);
       const candidate = buttons.find((node) => textOf(node) === '确定')
-        || buttons.find((node) => textOf(node) === '确认删除');
+        || buttons.find((node) => textOf(node) === '确认删除')
+        || buttons.find((node) => /确认删除|确定删除|确定/.test(textOf(node)))
+        || fallbackButtons.find((node) => textOf(node) === '确定')
+        || fallbackButtons.find((node) => /确认删除|确定删除|确定/.test(textOf(node)));
+      if (!(candidate instanceof HTMLElement)) return false;
+      candidate.scrollIntoView({ block: 'center' });
+      candidate.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      candidate.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      candidate.click();
+      return true;
+    })()
+  `);
+}
+
+async function clickDeleteCancel(session: ChromeSession): Promise<boolean> {
+  return await evaluate<boolean>(session, `
+    (function() {
+      const visible = (node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const rect = node.getBoundingClientRect();
+        const style = window.getComputedStyle(node);
+        return rect.width > 8 && rect.height > 8 && style.display !== 'none' && style.visibility !== 'hidden';
+      };
+      const textOf = (node) => String(node && node.textContent || '').replace(/\\s+/g, ' ').trim();
+
+      const dialog = Array.from(document.querySelectorAll('[role="dialog"], .cheetah-dialog-box, .cheetah-modal, .ant-modal, .semi-modal, .cheetah-confirm'))
+        .filter(visible)[0];
+      if (!(dialog instanceof HTMLElement)) return false;
+
+      const buttons = Array.from(dialog.querySelectorAll('button,a,[role="button"],span,div'))
+        .filter(visible);
+      const candidate = buttons.find((node) => textOf(node) === '取消')
+        || buttons.find((node) => textOf(node) === '关闭');
       if (!(candidate instanceof HTMLElement)) return false;
       candidate.click();
       return true;
@@ -731,8 +767,20 @@ async function runDelete(session: ChromeSession, options: ManageOptions): Promis
     throw new Error('Target article not found for delete.');
   }
 
-  await navigate(session, target.pageUrl || buildListUrl(options, 1), options.slowMs);
+  const deletePageUrl = target.pageUrl || buildListUrl(options, 1);
+  await navigate(session, deletePageUrl, options.slowMs);
   await assertNoRiskChallenge(session);
+
+  let hydrated = await waitForListHydration(session);
+  if (!hydrated) {
+    await ensureContentManagePage(session, options.slowMs);
+    await navigate(session, deletePageUrl, options.slowMs);
+    await assertNoRiskChallenge(session);
+    hydrated = await waitForListHydration(session);
+  }
+  if (!hydrated) {
+    throw new Error('Delete target page did not finish hydrating before row lookup.');
+  }
 
   const clickedDelete = await clickDeleteInCurrentPage(session, target);
   if (!clickedDelete) {
@@ -744,6 +792,37 @@ async function runDelete(session: ChromeSession, options: ManageOptions): Promis
   if (!dialog || !isDeleteConfirmDialogTextSafe(dialog.text)) {
     throw new Error(`Unsafe delete dialog state detected; aborting without confirm. Dialog text: ${dialog?.text || '(missing)'}`);
   }
+
+  if (options.dryRunDelete) {
+    let closeMethod: 'cancel' | 'reload' = 'cancel';
+    const cancelled = await clickDeleteCancel(session);
+    if (!cancelled) {
+      await navigate(session, deletePageUrl, options.slowMs);
+      await assertNoRiskChallenge(session);
+      const restored = await waitForListHydration(session);
+      if (!restored) {
+        throw new Error('Dry-run delete could not restore page after dialog probe.');
+      }
+      closeMethod = 'reload';
+    }
+    console.log(JSON.stringify({
+      ok: true,
+      command: 'delete',
+      dryRun: true,
+      candidate: {
+        title: target.title,
+        articleId: target.articleId,
+        nid: target.nid,
+      },
+      dialogSafety: {
+        safe: true,
+        dialogText: dialog.text,
+        closeMethod,
+      },
+    }, null, 2));
+    return;
+  }
+
   const clickedConfirm = await clickDeleteConfirm(session);
   if (!clickedConfirm) {
     throw new Error('Delete confirmation button not found.');

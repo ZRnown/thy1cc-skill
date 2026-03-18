@@ -19,6 +19,7 @@ test('help output documents list get delete and confirmation guard', () => {
   expect(output).toContain('get');
   expect(output).toContain('delete');
   expect(output).toContain('--confirm');
+  expect(output).toContain('--dry-run-delete');
 });
 
 test('source scopes Baijiahao delete confirm to dialog safety checks', () => {
@@ -26,8 +27,12 @@ test('source scopes Baijiahao delete confirm to dialog safety checks', () => {
   const source = fs.readFileSync(scriptPath, 'utf-8');
 
   expect(source).toContain('isDeleteConfirmDialogTextSafe');
+  expect(source).toContain('Delete target page did not finish hydrating before row lookup.');
   expect(source).toContain('Unsafe delete dialog state detected; aborting without confirm.');
   expect(source).toContain('[role="dialog"]');
   expect(source).toContain("Array.from(dialog.querySelectorAll('button,a,[role=\"button\"],span,div'))");
   expect(source).toContain("textOf(node) === '确定'");
+  expect(source).toContain('dryRunDelete');
+  expect(source).toContain('command: \'delete\'');
+  expect(source).toContain('dryRun: true');
 });
