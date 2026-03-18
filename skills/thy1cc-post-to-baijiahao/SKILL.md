@@ -9,6 +9,8 @@ description: Use when a user wants to publish or save articles to Baijiahao from
 
 Publish long-form Baijiahao articles through the logged-in creator backend in Chrome.
 
+The same skill now also supports browser-led content management (`list`, `get`, `delete`) with slow serial navigation and explicit delete confirmation.
+
 Default mode is browser-driven draft saving. Final publish should be opt-in with `--submit`, because Baijiahao may show extra dialogs, cover checks, or risk controls.
 
 ## Script Directory
@@ -19,6 +21,7 @@ Determine this directory as `SKILL_DIR`, then use these scripts:
 |--------|---------|
 | `scripts/check-permissions.ts` | Verify Chrome, Bun, profile dir, and Baijiahao reachability |
 | `scripts/baijiahao-article.ts` | Publish or save one article through the browser |
+| `scripts/baijiahao-manage.ts` | Browser-led list/get/delete for creator content management |
 
 ## Preferences (EXTEND.md)
 
@@ -169,6 +172,36 @@ Draft-save acceptance should use layered evidence:
 - Reopened editor check for final uploaded image count inside `iframe#ueditor_0`
 
 The content list is only a secondary hint. Preview image counts can still be false positives if the editor later reopens with fewer images.
+
+## Content Management Workflow (Browser-Led)
+
+Use this when you need creator-side operations on existing works.
+
+### Supported Commands
+
+```bash
+npx -y bun ${SKILL_DIR}/scripts/baijiahao-manage.ts list --max-pages 3 --page-size 10
+npx -y bun ${SKILL_DIR}/scripts/baijiahao-manage.ts get --article-id 1859795452973012305
+npx -y bun ${SKILL_DIR}/scripts/baijiahao-manage.ts delete --article-id 1859795452973012305 --confirm
+```
+
+`list` returns title/status/time/article_id/nid/url with best-effort metrics extracted from page DOM.
+
+`get` focuses on运营数据读取 (阅读/点赞/收藏/转发, and comment when detectable) using page text and DOM extraction.
+
+`delete` is intentionally narrow and safety-first:
+
+- Requires `--confirm`
+- Requires explicit target (`--article-id` or `--nid`)
+- Operates on one article per run
+- Performs post-delete page recheck before reporting success
+
+### Safety Boundaries
+
+- Browser-led only: reuse logged-in Chrome CDP session where possible.
+- Slow serial operations: page navigation is throttled by `--slow-ms` (default enabled).
+- Stop on challenge/risk indicators (`验证码`, `安全验证`, `扫码登录`, etc.) instead of retry-spamming.
+- Avoid high-frequency direct backend API loops for management operations.
 
 ## Common Mistakes
 

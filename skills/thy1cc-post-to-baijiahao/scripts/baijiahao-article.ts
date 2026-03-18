@@ -257,33 +257,93 @@ function guessImageFilename(imageUrl: string, index: number, mime: string): stri
     if (cleanName && /\.[a-z0-9]+$/i.test(cleanName)) return cleanName;
     if (cleanName) return `${cleanName}${inferExtensionFromMime(mime)}`;
   } catch {}
+  if (path.isAbsolute(imageUrl)) {
+    const cleanName = path.basename(imageUrl).replace(/[^a-zA-Z0-9._-]/g, '');
+    if (cleanName && /\.[a-z0-9]+$/i.test(cleanName)) return cleanName;
+    if (cleanName) return `${cleanName}${inferExtensionFromMime(mime)}`;
+  }
   return `baijiahao-image-${index + 1}${inferExtensionFromMime(mime)}`;
 }
 
-async function downloadRemoteImageAsset(imageUrl: string, index: number): Promise<RemoteImageAsset> {
-  const response = await fetch(imageUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0',
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to download image for Baijiahao upload: ${imageUrl} (${response.status})`);
+function parseRetryAfterMs(value: string | null): number | null {
+  if (!value) return null;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.max(1000, Math.round(seconds * 1000));
   }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const until = Date.parse(value);
+  if (Number.isFinite(until)) {
+    return Math.max(1000, until - Date.now());
+  }
+
+  return null;
+}
+
+function readLocalImageAsset(imagePath: string, index: number): RemoteImageAsset {
+  const localPath = imagePath.startsWith('file://')
+    ? decodeURIComponent(new URL(imagePath).pathname)
+    : imagePath;
+  const buffer = fs.readFileSync(localPath);
   if (!buffer.length) {
-    throw new Error(`Downloaded empty image for Baijiahao upload: ${imageUrl}`);
+    throw new Error(`Downloaded empty image for Baijiahao upload: ${imagePath}`);
   }
-
-  const headerMime = (response.headers.get('content-type') || '').split(';')[0]!.trim();
-  const mime = headerMime.startsWith('image/') ? headerMime : inferImageMimeType(imageUrl);
-
+  const mime = inferImageMimeType(localPath);
   return {
-    originalSrc: imageUrl,
+    originalSrc: imagePath,
     base64: buffer.toString('base64'),
     mime,
-    filename: guessImageFilename(imageUrl, index, mime),
+    filename: guessImageFilename(localPath, index, mime),
   };
+}
+
+async function downloadRemoteImageAsset(imageUrl: string, index: number): Promise<RemoteImageAsset> {
+  if (imageUrl.startsWith('file://') || path.isAbsolute(imageUrl)) {
+    return readLocalImageAsset(imageUrl, index);
+  }
+
+  let lastStatus = 0;
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const response = await fetch(imageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+      },
+    });
+
+    if (response.ok) {
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (!buffer.length) {
+        throw new Error(`Downloaded empty image for Baijiahao upload: ${imageUrl}`);
+      }
+
+      const headerMime = (response.headers.get('content-type') || '').split(';')[0]!.trim();
+      const mime = headerMime.startsWith('image/') ? headerMime : inferImageMimeType(imageUrl);
+
+      return {
+        originalSrc: imageUrl,
+        base64: buffer.toString('base64'),
+        mime,
+        filename: guessImageFilename(imageUrl, index, mime),
+      };
+    }
+
+    lastStatus = response.status;
+    const shouldRetry = response.status === 429 || response.status === 408 || response.status >= 500;
+    if (!shouldRetry || attempt === 3) {
+      throw new Error(`Failed to download image for Baijiahao upload: ${imageUrl} (${response.status})`);
+    }
+
+    const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
+    const delayMs = retryAfterMs ?? (2000 * (attempt + 1));
+    console.error(
+      `[baijiahao] Image download retry ${attempt + 1}/3 after ${response.status}: waiting ${delayMs}ms for ${imageUrl}`,
+    );
+    await sleep(delayMs);
+  }
+
+  throw new Error(`Failed to download image for Baijiahao upload: ${imageUrl} (${lastStatus || 'unknown'})`);
 }
 
 async function uploadImageToBaijiahao(session: ChromeSession, asset: RemoteImageAsset): Promise<string> {

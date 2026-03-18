@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Netease Hao Content"
+  short_description: "Browser-led list/get/delete for Netease Hao"
+  default_prompt: "Use $thy1cc-post-to-neteasehao to list/get/delete Netease Hao articles safely."

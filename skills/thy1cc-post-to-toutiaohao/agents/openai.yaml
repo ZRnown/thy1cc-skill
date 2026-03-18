@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Toutiao Hao"
+  short_description: "Browser-led list/get/delete for Toutiao Hao content"
+  default_prompt: "Use $thy1cc-post-to-toutiaohao to list, read metrics, or delete one Toutiao Hao article safely."
