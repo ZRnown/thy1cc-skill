@@ -1,13 +1,13 @@
 ---
 name: thy1cc-post-to-toutiaohao
-description: "Use when a user needs browser-led Toutiao Hao content management, including listing content, reading article metrics, and deleting one article with explicit confirmation."
+description: "Use when a user needs browser-led Toutiao Hao draft upload or content management, including saving article drafts, listing content, reading article metrics, and deleting one article with explicit confirmation."
 ---
 
 # Manage Toutiao Hao
 
 ## Overview
 
-This skill is browser-led and safety-first. It reuses a logged-in Chrome session when possible, falls back to launching an isolated profile, and performs `list/get/delete` via page navigation and DOM extraction.
+This skill is browser-led and safety-first. It reuses a logged-in Chrome session when possible, falls back to launching an isolated profile, and now supports both article draft upload and `list/get/delete` management flows through page navigation and DOM extraction.
 
 `delete` is intentionally strict:
 
@@ -21,6 +21,7 @@ Determine this directory as `SKILL_DIR`, then use:
 
 | Script | Purpose |
 |--------|---------|
+| `scripts/toutiao-article.ts` | Save one long-form article into the Toutiao draft box |
 | `scripts/toutiao-manage.ts` | List articles, get metrics, or delete one article |
 
 ## Preferences (EXTEND.md)
@@ -42,14 +43,43 @@ Recommended keys:
 
 ## Commands
 
-### 1) List content
+### 1) Save one article into drafts
+
+```bash
+node --experimental-strip-types ${SKILL_DIR}/scripts/toutiao-article.ts \
+  --html article-publish.html
+```
+
+Markdown package with companion HTML:
+
+```bash
+node --experimental-strip-types ${SKILL_DIR}/scripts/toutiao-article.ts \
+  --markdown article-publish.md
+```
+
+Plain text fallback:
+
+```bash
+node --experimental-strip-types ${SKILL_DIR}/scripts/toutiao-article.ts \
+  --content "正文" \
+  --title "标题"
+```
+
+Operational notes:
+
+- The script uses the real image drawer upload flow (`input[type=file]` + drawer confirm) so body images persist after reopening the draft.
+- Title input is React-controlled; the script uses the native textarea setter rather than `el.value = ...`.
+- Draft success is verified in three layers: page-side `草稿已保存`, draft-list fetch match by title, and reopened-editor image-count check after clicking `继续编辑`.
+- Toutiao title length is stricter than some other platforms; if the source title is too long, the script shortens it before saving and reports both versions.
+
+### 2) List content
 
 ```bash
 node --experimental-strip-types ${SKILL_DIR}/scripts/toutiao-manage.ts list \
   --max-pages 2
 ```
 
-### 2) Get article metrics
+### 3) Get article metrics
 
 By article id:
 
@@ -73,7 +103,7 @@ Expected metrics priority:
 - shares
 - comments (if detectable)
 
-### 3) Delete one article
+### 4) Delete one article
 
 ```bash
 node --experimental-strip-types ${SKILL_DIR}/scripts/toutiao-manage.ts delete \
