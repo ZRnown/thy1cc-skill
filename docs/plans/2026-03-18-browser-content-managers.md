@@ -99,7 +99,7 @@ Run all Netease skill tests.
 
 **Files:**
 - Modify: `README.md`
-- Sync later: `/Users/wanghaixin/.codex/skills/thy1cc-post-to-baijiahao`
+- Sync later: `$HOME/.codex/skills/thy1cc-post-to-baijiahao`
 
 **Step 1: Update docs**
 

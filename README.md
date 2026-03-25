@@ -1,4 +1,4 @@
-# skillCollection
+# thy1cc-skill
 
 Portable Codex/OpenClaw skills.
 
